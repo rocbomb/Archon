@@ -36,13 +36,13 @@ export class OpenCodeProvider implements IAgentProvider {
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === 'ENOENT') {
-        log.error({ binaryPath, err: e }, 'opencode.binary_not_found');
+        log.error({ binaryPath, err: e }, 'opencode.binary_resolve_failed');
         yield {
           type: 'system',
           content: `OpenCode binary not found: ${binaryPath}. Install opencode or set OPENCODE_BIN_PATH.`,
         };
       } else if (e.code === 'EACCES') {
-        log.error({ binaryPath, err: e }, 'opencode.binary_permission_denied');
+        log.error({ binaryPath, err: e }, 'opencode.binary_access_failed');
         yield {
           type: 'system',
           content: `Permission denied executing OpenCode: ${binaryPath}. Check file permissions.`,
@@ -64,16 +64,19 @@ export class OpenCodeProvider implements IAgentProvider {
     });
 
     const stdErrStream = childProcess.stderr;
+    const MAX_STDERR_BYTES = 100_000;
     let stderr = '';
     if (stdErrStream) {
       stdErrStream.on('data', data => {
-        stderr += String(data);
+        if (stderr.length < MAX_STDERR_BYTES) {
+          stderr += String(data);
+        }
       });
     }
 
     const stdoutStream = childProcess.stdout;
     if (!stdoutStream) {
-      log.error({ binaryPath, cwd }, 'opencode.stdout_null');
+      log.error({ binaryPath, cwd }, 'opencode.stdout_read_failed');
       childProcess.kill();
       yield { type: 'system', content: 'Failed to read OpenCode output.' };
       return;
@@ -92,9 +95,9 @@ export class OpenCodeProvider implements IAgentProvider {
         if (chunk) yield chunk;
       } catch (err) {
         if (err instanceof SyntaxError) {
-          log.debug({ line: line.slice(0, 200) }, 'opencode.non_json_line');
+          log.debug({ line: line.slice(0, 200) }, 'opencode.line_parse_skipped');
         } else {
-          log.warn({ err, line: line.slice(0, 200) }, 'opencode.line_processing_error');
+          log.warn({ err, line: line.slice(0, 200) }, 'opencode.line_process_failed');
         }
       }
     }
@@ -111,7 +114,7 @@ export class OpenCodeProvider implements IAgentProvider {
     if (childProcess.exitCode !== 0) {
       log.warn(
         { lineCount, exitCode: childProcess.exitCode, stderr: stderr.slice(0, 500) },
-        'opencode.non_zero_exit'
+        'opencode.process_exit_failed'
       );
       yield {
         type: 'system',
@@ -124,7 +127,7 @@ export class OpenCodeProvider implements IAgentProvider {
     }
 
     if (processError) {
-      log.warn({ err: processError }, 'opencode.process_error_event');
+      log.warn({ err: processError }, 'opencode.process_error_failed');
       yield {
         type: 'system',
         content: `OpenCode process error: ${processError.message}`,
